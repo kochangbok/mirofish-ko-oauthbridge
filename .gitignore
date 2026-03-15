@@ -1,0 +1,18 @@
+# Local secrets / session state
+.env.local
+.omx/
+.superset/
+session-handoff-*.md
+sample-seed.txt
+
+# Node / Python build artifacts
+node_modules/
+**/node_modules/
+.venv/
+**/.venv/
+
+# Local runtime config
+MiroFish/.env
+
+# External vendor checkout kept local only
+MiroFish/
