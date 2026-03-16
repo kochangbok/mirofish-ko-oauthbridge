@@ -1,41 +1,34 @@
 const express = require('express');
-const fs = require('fs/promises');
-const fsSync = require('fs');
-const os = require('os');
-const path = require('path');
-const crypto = require('crypto');
-const { execFile } = require('child_process');
-const { promisify } = require('util');
+const { buildPrompt, makeResponse } = require('./lib/prompt');
+const { renderIndexPage } = require('./lib/ui');
+const {
+  createProvider,
+  createProviderFromEnv,
+  getDefaultProviderName,
+  getSupportedProviders,
+  resolveProviderSelection,
+} = require('./providers');
 
-const execFileAsync = promisify(execFile);
 const app = express();
 app.use(express.json({ limit: '4mb' }));
-app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(204);
-  }
-  next();
-});
 
 const PORT = Number(process.env.PORT || 8787);
-const CODEX_BIN = process.env.CODEX_BIN || 'codex';
-const DEFAULT_MODEL = process.env.CODEX_MODEL || 'gpt-5.1-codex-mini';
-const CODEX_WORKDIR = process.env.CODEX_BRIDGE_WORKDIR || process.cwd();
-const CODEX_TIMEOUT_MS = Number(process.env.CODEX_TIMEOUT_MS || 180000);
+const maxConcurrent = Math.max(1, Number(process.env.BRIDGE_MAX_CONCURRENCY || 2));
+const supportedProviders = getSupportedProviders();
+const defaultProviderName = getDefaultProviderName(process.env);
+const defaultProvider = createProviderFromEnv(process.env);
 
-let busy = false;
+let activeJobs = 0;
 let queueDepth = 0;
 const pendingJobs = [];
 
 function dequeueAndRunNext() {
-  if (busy || pendingJobs.length === 0) return;
-  const nextJob = pendingJobs.shift();
-  busy = true;
-  queueDepth = pendingJobs.length;
-  nextJob();
+  while (activeJobs < maxConcurrent && pendingJobs.length > 0) {
+    const nextJob = pendingJobs.shift();
+    activeJobs += 1;
+    queueDepth = pendingJobs.length;
+    nextJob();
+  }
 }
 
 function enqueueCompletion(taskFactory) {
@@ -47,153 +40,75 @@ function enqueueCompletion(taskFactory) {
       } catch (error) {
         reject(error);
       } finally {
-        busy = false;
+        activeJobs = Math.max(0, activeJobs - 1);
         queueDepth = pendingJobs.length;
         dequeueAndRunNext();
       }
     };
 
-    if (!busy && pendingJobs.length === 0) {
-      busy = true;
-      run();
-      return;
-    }
-
     pendingJobs.push(run);
     queueDepth = pendingJobs.length;
+    dequeueAndRunNext();
   });
 }
 
-function buildPrompt(messages, opts = {}) {
-  const header = [
-    'You are acting as a best-effort OpenAI-compatible chat completion bridge for a third-party app.',
-    'Return ONLY the final answer for the assistant turn.',
-    'Do not mention Codex, CLI internals, or bridge implementation details unless the user explicitly asks.',
-  ];
+async function collectProviderHealth(providerName) {
+  const provider = createProvider(providerName, process.env);
+  const providerHealth = await provider.getHealth();
+  const providerAvailable = Boolean(
+    providerHealth.providerAvailable ?? providerHealth.cliAvailable ?? providerHealth.codexAvailable
+  );
+  const queueDepth = Number.isFinite(providerHealth.queueDepth) ? providerHealth.queueDepth : 0;
 
-  if (opts.jsonMode) {
-    header.push(
-      'IMPORTANT: Return a valid JSON object only.',
-      'Do not wrap the JSON in markdown fences.',
-      'Do not add explanations before or after the JSON.'
-    );
-  }
-
-  if (typeof opts.maxTokens === 'number' && Number.isFinite(opts.maxTokens)) {
-    header.push(`Try to stay within roughly ${opts.maxTokens} output tokens.`);
-  }
-
-  const body = messages
-    .map((msg, idx) => {
-      const role = (msg.role || 'user').toUpperCase();
-      const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content ?? '');
-      return `[#${idx + 1} ${role}]\n${content}`;
-    })
-    .join('\n\n');
-
-  return `${header.join('\n')}\n\nConversation:\n\n${body}\n\nNow produce the assistant response for the last turn.`;
-}
-
-function makeResponse({ model, content }) {
-  const created = Math.floor(Date.now() / 1000);
   return {
-    id: `chatcmpl_${crypto.randomUUID().replace(/-/g, '')}`,
-    object: 'chat.completion',
-    created,
-    model,
-    choices: [
-      {
-        index: 0,
-        message: {
-          role: 'assistant',
-          content,
-        },
-        finish_reason: 'stop',
-      },
-    ],
-    usage: {
-      prompt_tokens: 0,
-      completion_tokens: 0,
-      total_tokens: 0,
-    },
+    provider: provider.name,
+    defaultModel: provider.defaultModel,
+    ...providerHealth,
+    providerAvailable,
+    codexAvailable: Boolean(
+      providerHealth.codexAvailable ?? (provider.name === 'codex' ? providerAvailable : false)
+    ),
+    queueDepth,
   };
 }
 
-async function runCodex({ prompt, model }) {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-bridge-'));
-  const outputFile = path.join(tmpDir, 'last-message.txt');
+app.get('/', (_req, res) => {
+  res.type('html').send(renderIndexPage({ defaultProviderName, supportedProviders }));
+});
 
-  const args = [
-    'exec',
-    '--skip-git-repo-check',
-    '--ephemeral',
-    '-C',
-    CODEX_WORKDIR,
-    '-m',
-    model,
-    '-o',
-    outputFile,
-    prompt,
-  ];
-
-  try {
-    try {
-      await execFileAsync(CODEX_BIN, args, {
-        maxBuffer: 10 * 1024 * 1024,
-        env: process.env,
-        timeout: CODEX_TIMEOUT_MS,
-        killSignal: 'SIGKILL',
-      });
-    } catch (error) {
-      if (
-        error.code === 'ETIMEDOUT' ||
-        error.signal === 'SIGKILL' ||
-        String(error.message || '').includes('timed out')
-      ) {
-        throw new Error(`Codex request timed out after ${Math.round(CODEX_TIMEOUT_MS / 1000)} seconds.`);
-      }
-      throw error;
-    }
-
-    const content = await fs.readFile(outputFile, 'utf8');
-    return content.trim();
-  } finally {
-    await fs.rm(tmpDir, { recursive: true, force: true });
-  }
-}
-
-app.get('/health', async (_req, res) => {
-  let codexAvailable = false;
-  let loginStatus = 'unknown';
-
-  try {
-    await execFileAsync(CODEX_BIN, ['--version'], { env: process.env });
-    codexAvailable = true;
-  } catch {
-    codexAvailable = false;
-  }
-
-  try {
-    const { stdout } = await execFileAsync(CODEX_BIN, ['login', 'status'], { env: process.env });
-    loginStatus = stdout.trim() || 'unknown';
-  } catch {
-    loginStatus = 'not logged in';
+app.get('/providers', async (_req, res) => {
+  const providers = [];
+  for (const providerName of supportedProviders) {
+    providers.push(await collectProviderHealth(providerName));
   }
 
   res.json({
     ok: true,
-    busy,
-    queueDepth,
-    codexAvailable,
-    loginStatus,
-    workdir: CODEX_WORKDIR,
-    defaultModel: DEFAULT_MODEL,
-    timeoutMs: CODEX_TIMEOUT_MS,
+    busy: activeJobs > 0,
+    activeJobs,
+    maxConcurrent,
+    defaultProvider: defaultProviderName,
+    providers,
+  });
+});
+
+app.get('/health', async (req, res) => {
+  const requestedProvider = typeof req.query.provider === 'string' ? req.query.provider : defaultProviderName;
+  const providerHealth = await collectProviderHealth(requestedProvider.toLowerCase());
+
+  res.json({
+    ok: true,
+    busy: activeJobs > 0,
+    activeJobs,
+    maxConcurrent,
+    supportedProviders,
+    defaultProvider: defaultProviderName,
+    ...providerHealth,
   });
 });
 
 app.post('/v1/chat/completions', async (req, res) => {
-  const { messages, model, stream, response_format, max_tokens } = req.body || {};
+  const { messages, model, provider: requestedProvider, stream, response_format, max_tokens } = req.body || {};
 
   if (stream) {
     return res.status(400).json({
@@ -214,30 +129,53 @@ app.post('/v1/chat/completions', async (req, res) => {
   }
 
   try {
-    const resolvedModel = typeof model === 'string' && model.trim() ? model.trim() : DEFAULT_MODEL;
-    const content = await enqueueCompletion(async () => {
+    const { response, bridgeMeta } = await enqueueCompletion(async () => {
+      const selection = resolveProviderSelection({
+        requestedProvider,
+        model,
+        env: process.env,
+      });
+
       const prompt = buildPrompt(messages, {
+        providerLabel: selection.provider.providerLabel,
         jsonMode: response_format && response_format.type === 'json_object',
         maxTokens: max_tokens,
       });
-      return runCodex({ prompt, model: resolvedModel });
+
+      const content = await selection.provider.runCompletion({ prompt, model: selection.model });
+      const response = makeResponse({ model: selection.model, content });
+
+      return {
+        response,
+        bridgeMeta: {
+          provider: selection.providerName,
+          defaultProvider: defaultProviderName,
+          modelWasProviderQualified: selection.modelWasProviderQualified,
+        },
+      };
     });
-    res.json(makeResponse({ model: resolvedModel, content }));
+
+    response.bridge = bridgeMeta;
+    res.json(response);
   } catch (error) {
-    res.status(500).json({
+    const statusCode = error.code === 'ETIMEDOUT' ? 504 : 500;
+    res.status(statusCode).json({
       error: {
         message: error.message || 'Bridge execution failed.',
-        type: 'server_error',
+        type: error.code === 'ETIMEDOUT' ? 'timeout_error' : 'server_error',
       },
     });
   }
 });
 
 app.listen(PORT, () => {
-  const loginStatus = fsSync.existsSync(path.join(os.homedir(), '.codex')) ? 'credentials directory present' : 'credentials directory missing';
+  const startup = defaultProvider.getStartupSummary();
   console.log(`codex-bridge listening on http://127.0.0.1:${PORT}`);
-  console.log(`workdir=${CODEX_WORKDIR}`);
-  console.log(`defaultModel=${DEFAULT_MODEL}`);
-  console.log(`timeoutMs=${CODEX_TIMEOUT_MS}`);
-  console.log(`codexAuth=${loginStatus}`);
+  console.log(`defaultProvider=${defaultProvider.name}`);
+  console.log(`supportedProviders=${supportedProviders.join(',')}`);
+  console.log(`defaultModel=${defaultProvider.defaultModel}`);
+  console.log(`maxConcurrent=${maxConcurrent}`);
+  Object.entries(startup).forEach(([key, value]) => {
+    console.log(`${key}=${value}`);
+  });
 });

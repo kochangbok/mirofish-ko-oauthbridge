@@ -1,0 +1,21 @@
+{
+  "name": "mirofish-public-dashboard",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "worker": "node scripts/process-queue.mjs",
+    "publish-report": "node scripts/publish-report.mjs"
+  },
+  "dependencies": {
+    "d3": "^7.9.0",
+    "next": "^16.1.6",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1"
+  }
+}

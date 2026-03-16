@@ -1,0 +1,28 @@
+{
+  "updatedAt": "2026-03-15T19:32:12.795Z",
+  "items": [
+    {
+      "reportId": "report_6aa432c684b9",
+      "title": "호르무즈 함정 요청 이후 한국 주말 여론·시장 시뮬레이션",
+      "summary": "3월 15~16일 주말 동안 한미 미확정 요청을 둘러싼 에이전트들이 리스크 인식, 서사 확산, 산업별 반응을 동시에 촉발하며 월요일 개장 전 불확실성을 키운다.",
+      "status": "completed",
+      "createdAt": "2026-03-16T03:04:24.765093",
+      "updatedAt": "2026-03-16T03:21:46.793095",
+      "publishedAt": "2026-03-15T19:32:12.791Z",
+      "simulationId": "sim_e705207c89ec",
+      "requestId": null,
+      "tags": [
+        "MiroFish",
+        "Hormuz",
+        "Korea Market",
+        "Public Dashboard Seed",
+        "Workbench",
+        "Graph"
+      ],
+      "graphId": "mirofish_e3ed41d8e322460b",
+      "nodeCount": 214,
+      "edgeCount": 351,
+      "stepCount": 5
+    }
+  ]
+}

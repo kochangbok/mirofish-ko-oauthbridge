@@ -1,0 +1,34 @@
+{
+  "name": "mirofish-ko-oauthbridge",
+  "version": "0.1.0",
+  "description": "Korean-first MiroFish bundle with local OAuth bridge",
+  "scripts": {
+    "setup": "npm install && cd frontend && npm install",
+    "setup:backend": "cd backend && uv sync",
+    "setup:all": "npm run setup && npm run setup:backend",
+    "dev": "concurrently --kill-others -n \"backend,frontend\" -c \"green,cyan\" \"npm run backend\" \"npm run frontend\"",
+    "backend": "cd backend && uv run python run.py",
+    "frontend": "cd frontend && npm run dev",
+    "build": "cd frontend && npm run build",
+    "setup:bridge": "cd codex-bridge && npm install",
+    "setup:public": "npm run setup && npm run setup:backend && npm run setup:bridge",
+    "bridge": "PORT=${PORT:-8787} CODEX_BRIDGE_WORKDIR=${CODEX_BRIDGE_WORKDIR:-$PWD} sh -c 'cd codex-bridge && npm start'",
+    "dev:all:raw": "concurrently --kill-others -n \"bridge,backend,frontend\" -c \"magenta,green,cyan\" \"npm run bridge\" \"npm run backend\" \"npm run frontend\"",
+    "dev:all": "bash ./scripts/dev-all.sh",
+    "health": "node ./scripts/health-check.mjs",
+    "stop:all": "bash ./scripts/stop-all.sh",
+    "dashboard:install": "cd dashboard && npm install",
+    "dashboard:dev": "cd dashboard && npm run dev",
+    "dashboard:build": "cd dashboard && npm run build",
+    "dashboard:worker": "cd dashboard && npm run worker",
+    "dashboard:publish-report": "cd dashboard && npm run publish-report",
+    "dashboard:worker:auto": "bash ./scripts/run-dashboard-worker.sh"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "AGPL-3.0"
+}
