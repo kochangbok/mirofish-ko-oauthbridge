@@ -10,6 +10,15 @@ const { promisify } = require('util');
 const execFileAsync = promisify(execFile);
 const app = express();
 app.use(express.json({ limit: '4mb' }));
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  next();
+});
 
 const PORT = Number(process.env.PORT || 8787);
 const CODEX_BIN = process.env.CODEX_BIN || 'codex';
@@ -18,6 +27,42 @@ const CODEX_WORKDIR = process.env.CODEX_BRIDGE_WORKDIR || process.cwd();
 const CODEX_TIMEOUT_MS = Number(process.env.CODEX_TIMEOUT_MS || 180000);
 
 let busy = false;
+let queueDepth = 0;
+const pendingJobs = [];
+
+function dequeueAndRunNext() {
+  if (busy || pendingJobs.length === 0) return;
+  const nextJob = pendingJobs.shift();
+  busy = true;
+  queueDepth = pendingJobs.length;
+  nextJob();
+}
+
+function enqueueCompletion(taskFactory) {
+  return new Promise((resolve, reject) => {
+    const run = async () => {
+      try {
+        const result = await taskFactory();
+        resolve(result);
+      } catch (error) {
+        reject(error);
+      } finally {
+        busy = false;
+        queueDepth = pendingJobs.length;
+        dequeueAndRunNext();
+      }
+    };
+
+    if (!busy && pendingJobs.length === 0) {
+      busy = true;
+      run();
+      return;
+    }
+
+    pendingJobs.push(run);
+    queueDepth = pendingJobs.length;
+  });
+}
 
 function buildPrompt(messages, opts = {}) {
   const header = [
@@ -138,6 +183,7 @@ app.get('/health', async (_req, res) => {
   res.json({
     ok: true,
     busy,
+    queueDepth,
     codexAvailable,
     loginStatus,
     workdir: CODEX_WORKDIR,
@@ -167,25 +213,15 @@ app.post('/v1/chat/completions', async (req, res) => {
     });
   }
 
-  if (busy) {
-    return res.status(503).json({
-      error: {
-        message: 'Bridge is busy. This prototype handles one request at a time.',
-        type: 'server_error',
-      },
-    });
-  }
-
-  busy = true;
-
   try {
-    const prompt = buildPrompt(messages, {
-      jsonMode: response_format && response_format.type === 'json_object',
-      maxTokens: max_tokens,
-    });
-
     const resolvedModel = typeof model === 'string' && model.trim() ? model.trim() : DEFAULT_MODEL;
-    const content = await runCodex({ prompt, model: resolvedModel });
+    const content = await enqueueCompletion(async () => {
+      const prompt = buildPrompt(messages, {
+        jsonMode: response_format && response_format.type === 'json_object',
+        maxTokens: max_tokens,
+      });
+      return runCodex({ prompt, model: resolvedModel });
+    });
     res.json(makeResponse({ model: resolvedModel, content }));
   } catch (error) {
     res.status(500).json({
@@ -194,8 +230,6 @@ app.post('/v1/chat/completions', async (req, res) => {
         type: 'server_error',
       },
     });
-  } finally {
-    busy = false;
   }
 });
 
