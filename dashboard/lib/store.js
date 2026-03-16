@@ -25,14 +25,15 @@ export async function getRequestIndex() {
 }
 
 export async function getReport(reportId) {
-  const [meta, markdown, graph, workbench] = await Promise.all([
+  const [meta, markdown, graph, workbench, inputs] = await Promise.all([
     readRepoFile(`dashboard-data/reports/${reportId}/meta.json`, { parseJson: true, fallback: null }),
     readRepoFile(`dashboard-data/reports/${reportId}/full_report.md`, { parseJson: false, fallback: '' }),
     readRepoFile(`dashboard-data/reports/${reportId}/graph.json`, { parseJson: true, fallback: null }),
-    readRepoFile(`dashboard-data/reports/${reportId}/workbench.json`, { parseJson: true, fallback: null })
+    readRepoFile(`dashboard-data/reports/${reportId}/workbench.json`, { parseJson: true, fallback: null }),
+    readRepoFile(`dashboard-data/reports/${reportId}/inputs.json`, { parseJson: true, fallback: null })
   ])
   if (!meta) return null
-  return { ...meta, markdown, graph, workbench }
+  return { ...meta, markdown, graph, workbench, inputs }
 }
 
 export async function getRequest(requestId) {
@@ -118,12 +119,15 @@ export async function updateRequestStatus(requestId, patch) {
   return writeRequestRecord(next, `chore(queue): ${next.status} ${requestId}`)
 }
 
-export async function publishReport({ reportId, meta, markdown, graph = null, workbench = null }) {
+export async function publishReport({ reportId, meta, markdown, graph = null, inputs = null, workbench = null }) {
   const dir = `dashboard-data/reports/${reportId}`
   await upsertRepoFile(`${dir}/meta.json`, JSON.stringify(meta, null, 2) + '\n', `feat(report): publish ${reportId} meta`)
   await upsertRepoFile(`${dir}/full_report.md`, markdown, `feat(report): publish ${reportId} markdown`)
   if (graph) {
     await upsertRepoFile(`${dir}/graph.json`, JSON.stringify(graph, null, 2) + '\n', `feat(report): publish ${reportId} graph`)
+  }
+  if (inputs) {
+    await upsertRepoFile(`${dir}/inputs.json`, JSON.stringify(inputs, null, 2) + '\n', `feat(report): publish ${reportId} inputs`)
   }
   if (workbench) {
     await upsertRepoFile(`${dir}/workbench.json`, JSON.stringify(workbench, null, 2) + '\n', `feat(report): publish ${reportId} workbench`)

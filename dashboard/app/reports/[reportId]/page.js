@@ -49,6 +49,7 @@ export default async function ReportPage({ params }) {
   }
 
   const conclusion = extractConclusion(report.markdown, report.summary)
+  const sourceMaterials = report.inputs || { simulationPrompt: '', sourceFiles: [] }
 
   return (
     <main>
@@ -93,6 +94,36 @@ export default async function ReportPage({ params }) {
                 <span className="badge">게시 {formatDate(report.publishedAt || report.updatedAt)}</span>
               </div>
             </div>
+          </div>
+        </section>
+
+        <section className="panel-card">
+          <div className="panel-head split">
+            <div>
+              <div className="panel-kicker">입력 단서</div>
+              <h2>현실 단서 파일과 시뮬레이션 프롬프트</h2>
+              <p className="muted">리포트를 만들 때 최초로 넣었던 현실 단서 파일과 시뮬레이션 프롬프트를 먼저 보여줘.</p>
+            </div>
+          </div>
+
+          <div className="details-stack">
+            <details className="detail-card" open>
+              <summary>시뮬레이션 프롬프트</summary>
+              <pre className="log-box">{sourceMaterials.simulationPrompt || '기록된 시뮬레이션 프롬프트가 없어.'}</pre>
+            </details>
+
+            {(sourceMaterials.sourceFiles || []).map((file, index) => (
+              <details className="detail-card" open key={`${file.filename || 'source'}-${index}`}>
+                <summary>{file.filename || `현실 단서 파일 ${index + 1}`}</summary>
+                <div className="meta-list small">
+                  <span className="badge">파일 {index + 1}</span>
+                  {typeof file.size === 'number' ? <span className="badge">{file.size.toLocaleString()} 바이트</span> : null}
+                </div>
+                <div className="markdown">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{file.content || '_표시할 파일 내용이 없어._'}</ReactMarkdown>
+                </div>
+              </details>
+            ))}
           </div>
         </section>
 

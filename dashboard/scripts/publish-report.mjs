@@ -49,6 +49,7 @@ const normalized = {
   },
   markdown,
   graph: artifacts.graph,
+  inputs: artifacts.inputs,
   workbench: artifacts.workbench
 }
 

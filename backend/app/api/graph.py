@@ -107,6 +107,52 @@ def get_project(project_id: str):
     })
 
 
+@graph_bp.route('/project/<project_id>/inputs', methods=['GET'])
+def get_project_inputs(project_id: str):
+    """
+    Return the original simulation prompt and uploaded source-file contents
+    so publishing pipelines can expose the original cues on the public dashboard.
+    """
+    project = ProjectManager.get_project(project_id)
+
+    if not project:
+        return jsonify({
+            "success": False,
+            "error": f"项目不存在: {project_id}"
+        }), 404
+
+    saved_paths = sorted(ProjectManager.get_project_files(project_id), key=os.path.getmtime)
+    files = []
+
+    for index, meta in enumerate(project.files or []):
+        path = saved_paths[index] if index < len(saved_paths) else None
+        saved_filename = os.path.basename(path) if path else None
+        content = ""
+
+        if path and os.path.exists(path):
+            try:
+                content = FileParser.extract_text(path) or ""
+            except Exception as exc:
+                logger.warning(f"Failed to extract project input text: project={project_id}, file={path}, error={exc}")
+
+        files.append({
+            "filename": meta.get("filename") or saved_filename or f"file-{index + 1}",
+            "saved_filename": saved_filename,
+            "size": meta.get("size", 0),
+            "content": content,
+        })
+
+    return jsonify({
+        "success": True,
+        "data": {
+            "project_id": project.project_id,
+            "simulation_requirement": project.simulation_requirement or "",
+            "combined_extracted_text": ProjectManager.get_extracted_text(project_id) or "",
+            "files": files,
+        }
+    })
+
+
 @graph_bp.route('/project/list', methods=['GET'])
 def list_projects():
     """

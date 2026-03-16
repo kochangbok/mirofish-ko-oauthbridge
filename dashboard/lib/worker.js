@@ -175,6 +175,7 @@ async function normalizeReportPayload(report, requestId) {
     },
     markdown: report.markdown_content || '# Empty report\n',
     graph: artifacts.graph,
+    inputs: artifacts.inputs,
     workbench: artifacts.workbench
   }
 }

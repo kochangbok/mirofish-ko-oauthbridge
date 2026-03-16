@@ -72,6 +72,18 @@ function buildGraphArtifact({ project, graph }) {
   }
 }
 
+function buildInputsArtifact({ project, projectInputs }) {
+  return {
+    simulationPrompt: projectInputs?.simulation_requirement || project?.simulation_requirement || '',
+    sourceFiles: (projectInputs?.files || []).map((file) => ({
+      filename: file.filename,
+      size: file.size,
+      content: file.content || ''
+    })),
+    combinedExtractedText: projectInputs?.combined_extracted_text || ''
+  }
+}
+
 function buildStepStatus(rawStatus, fallback = 'completed') {
   const status = `${rawStatus || fallback}`.toLowerCase()
   if (['completed', 'ready', 'success', 'done', 'graph_completed'].includes(status)) return 'completed'
@@ -240,7 +252,7 @@ export async function gatherReportArtifacts({ reportId, simulationId = null, bas
     : null
   const graphId = report?.graph_id || simulation?.graph_id || project?.graph_id
 
-  const [graph, config, runDetail, runBasic, progress, sectionsData, consoleData, agentData] = await Promise.all([
+  const [graph, config, runDetail, runBasic, progress, sectionsData, consoleData, agentData, projectInputs] = await Promise.all([
     graphId ? tryMirofishJson(`/api/graph/data/${graphId}`, { baseUrl }) : null,
     resolvedSimulationId ? tryMirofishJson(`/api/simulation/${resolvedSimulationId}/config`, { baseUrl }) : null,
     resolvedSimulationId ? tryMirofishJson(`/api/simulation/${resolvedSimulationId}/run-status/detail`, { baseUrl }) : null,
@@ -248,7 +260,8 @@ export async function gatherReportArtifacts({ reportId, simulationId = null, bas
     reportId ? tryMirofishJson(`/api/report/${reportId}/progress`, { baseUrl }) : null,
     reportId ? tryMirofishJson(`/api/report/${reportId}/sections`, { baseUrl }) : null,
     reportId ? tryMirofishJson(`/api/report/${reportId}/console-log/stream`, { baseUrl }) : null,
-    reportId ? tryMirofishJson(`/api/report/${reportId}/agent-log/stream`, { baseUrl }) : null
+    reportId ? tryMirofishJson(`/api/report/${reportId}/agent-log/stream`, { baseUrl }) : null,
+    project?.project_id ? tryMirofishJson(`/api/graph/project/${project.project_id}/inputs`, { baseUrl }) : null
   ])
 
   const run = runDetail || runBasic || null
@@ -258,6 +271,7 @@ export async function gatherReportArtifacts({ reportId, simulationId = null, bas
 
   return {
     graph: project || graph ? buildGraphArtifact({ project, graph }) : null,
+    inputs: project || projectInputs ? buildInputsArtifact({ project, projectInputs }) : null,
     workbench: buildWorkbenchArtifact({
       project,
       simulation,
